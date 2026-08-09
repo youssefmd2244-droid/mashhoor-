@@ -1,0 +1,221 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --c-maroon: #A90009;
+    --c-maroon-deep: #750001;
+    --c-gold: #EEC31C;
+    --c-red: #C11E10;
+    --c-red-deep: #AC0B06;
+    --c-cream: #EDD8BA;
+    --c-charcoal: #1C1F21;
+    --c-charcoal-2: #202325;
+    --c-charcoal-3: #403933;
+    --c-sand: #B9B097;
+    --c-olive: #31492D;
+    --c-olive-2: #34492E;
+    --c-sage: #687457;
+    --c-tomato: #B3172D;
+    --c-salmon: #CB977F;
+    --c-mustard: #F2BF05;
+    --c-brick: #9B3734;
+    --c-olive-acc: #869B11;
+    --c-white-cream: #E8E8E9;
+    --c-white-pure: #FFFEFF;
+    --c-gold-brown: #A37C4A;
+    --c-grey-1: #60564C;
+    --c-grey-2: #C5C6C7;
+    --c-grey-3: #D1D2D2;
+    --c-mauve: #D7B3B2;
+    --c-mauve-2: #D3B9B8;
+    --c-near-white: #F3F3F2;
+    --c-mauve-deep: #866A68;
+    --c-kraft: #F5E9DD;
+    --c-kraft-2: #F7EDE3;
+    --c-brown-deep: #2A1C1A;
+    --c-brown-mid: #846950;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #0a0a0a;
+    color: #fff;
+    font-family: var(--font-override, 'Inter', 'Cairo', system-ui, sans-serif);
+    overflow-x: hidden;
+  }
+
+  html[dir="rtl"] body {
+    font-family: var(--font-override, 'Cairo', 'Inter', system-ui, sans-serif);
+  }
+
+  /* Arabic script must NOT get artificial letter-spacing: it breaks the
+     natural joining between letters and makes text look broken / spaced
+     apart. Tailwind's tracking-* utilities (and .whitespace-rhythm) are
+     used across the site for a cinematic English look — neutralize them
+     automatically whenever we're in Arabic so Arabic text always renders
+     correctly, with zero need to touch every section file. */
+  html[dir="rtl"] [class*="tracking-"] {
+    letter-spacing: normal !important;
+  }
+
+  html.lenis, html.lenis body {
+    height: auto;
+  }
+  .lenis.lenis-smooth {
+    scroll-behavior: auto !important;
+  }
+  .lenis.lenis-smooth [data-lenis-prevent] {
+    overscroll-behavior: contain;
+  }
+  .lenis.lenis-stopped {
+    overflow: hidden;
+  }
+  .lenis.lenis-scrolling iframe {
+    pointer-events: none;
+  }
+
+  ::selection {
+    background: #EEC31C;
+    color: #750001;
+  }
+}
+
+@layer utilities {
+  .font-display { font-family: 'Playfair Display', 'DM Serif Display', serif; }
+  .font-ar-display { font-family: 'Cairo', sans-serif; }
+  .font-mono { font-family: 'Special Elite', monospace; }
+  .font-bubble { font-family: 'Bebas Neue', 'Space Grotesk', sans-serif; }
+  .font-grotesk { font-family: 'Space Grotesk', sans-serif; }
+
+  .grain-overlay::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.5 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    opacity: 0.15;
+    mix-blend-mode: overlay;
+  }
+
+  .paper-grain::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.35'/></svg>");
+    opacity: 0.18;
+    mix-blend-mode: multiply;
+  }
+
+  .text-stroke {
+    -webkit-text-stroke: 1px currentColor;
+    color: transparent;
+  }
+
+  .text-stroke-thick {
+    -webkit-text-stroke: 2px currentColor;
+    color: transparent;
+  }
+
+  .heat-shimmer {
+    background: radial-gradient(ellipse at center, rgba(255,140,40,0.15) 0%, transparent 60%);
+    animation: shimmer 3s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    0%, 100% { transform: scale(1) translateY(0); opacity: 0.6; }
+    50% { transform: scale(1.1) translateY(-3px); opacity: 1; }
+  }
+
+  .floating-particle {
+    position: absolute;
+    border-radius: 50%;
+    background: currentColor;
+    pointer-events: none;
+  }
+
+  @keyframes ken-burns {
+    0% { transform: scale(1) translate(0, 0); }
+    100% { transform: scale(1.08) translate(-1%, -1%); }
+  }
+
+  .ken-burns {
+    animation: ken-burns 8s ease-out forwards;
+  }
+
+  .whitespace-rhythm {
+    letter-spacing: 0.3em;
+  }
+
+  @keyframes stamp-in {
+    0% { transform: scale(2) rotate(-8deg); opacity: 0; }
+    70% { transform: scale(0.95) rotate(2deg); opacity: 1; }
+    100% { transform: scale(1) rotate(0); opacity: 1; }
+  }
+  .stamp-in { animation: stamp-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+
+  @keyframes bounce-elastic {
+    0% { transform: scale(0) rotate(-15deg); opacity: 0; }
+    60% { transform: scale(1.15) rotate(5deg); opacity: 1; }
+    80% { transform: scale(0.95) rotate(-2deg); }
+    100% { transform: scale(1) rotate(0); }
+  }
+  .bounce-elastic { animation: bounce-elastic 0.8s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards; }
+
+  @keyframes wipe-line {
+    0% { transform: scaleX(0); }
+    100% { transform: scaleX(1); }
+  }
+  .wipe-line {
+    transform-origin: left;
+    animation: wipe-line 1.2s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+  }
+  html[dir="rtl"] .wipe-line {
+    transform-origin: right;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* Subtle 3D tilt for payment/delivery method cards — matches the "3D and
+     motion" request without a heavy 3D engine. */
+  .tilt-card {
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+    transform-style: preserve-3d;
+  }
+  .tilt-card:hover {
+    transform: perspective(700px) rotateX(4deg) rotateY(-4deg) translateY(-2px);
+    box-shadow: 0 10px 24px -8px rgba(0, 0, 0, 0.5);
+  }
+  .tilt-card:active { transform: perspective(700px) scale(0.97); }
+
+  /* 3D pop-in for the checkout / settings modals. */
+  @keyframes gate-pop-in {
+    0% { transform: perspective(900px) rotateX(12deg) scale(0.9); opacity: 0; }
+    100% { transform: perspective(900px) rotateX(0) scale(1); opacity: 1; }
+  }
+  .gate-pop-in { animation: gate-pop-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+  /* Small moving delivery scooter next to the "توصيل" label. */
+  @keyframes delivery-drive {
+    0%, 100% { transform: translateX(0); }
+    50% { transform: translateX(3px); }
+  }
+  .delivery-emoji { display: inline-block; animation: delivery-drive 1s ease-in-out infinite; }
+
+  /* Display modes (Settings → العرض). Applied on <html data-mode="..."> —
+     an image-safe global filter approach rather than rewriting every
+     component's colors, so it's low-risk to layer on top of the existing
+     branded palette. */
+  html[data-mode="eyeComfort"] { filter: sepia(0.22) saturate(0.88) brightness(1.02); }
+  html[data-mode="dark"] { filter: brightness(0.82) contrast(1.08); }
+  html[data-mode="bw"] { filter: grayscale(1); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
