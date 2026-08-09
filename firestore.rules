@@ -1,0 +1,72 @@
+rules_version = '2';
+
+// Security model note (read this before changing anything):
+//
+// This app has NO Firebase Authentication wired up. The admin panel is
+// gated by a local password check only (see src/lib/settingsAuth.ts), not
+// a backend session. The storefront (menu, checkout) and the admin panel
+// both run from the same public bundle and write directly to Firestore
+// using nothing but the public Web API Key — which is an identifier, not
+// a secret. That means Firestore rules are the ONLY real access control
+// here, and they cannot distinguish "the site's checkout flow" from "the
+// site's admin panel" from "anyone with the API key", because none of
+// those are authenticated.
+//
+// This mirrors the same trade-off already made for this project's
+// Supabase setup (anon key + permissive RLS, documented in
+// SUPABASE-SETUP-AR.md) — open read/write so the site keeps working
+// exactly as designed, with the same caveat: don't publish the
+// projectId/apiKey pair somewhere public beyond the app itself.
+//
+// If you later add real Firebase Authentication (e.g. a signed-in admin
+// user), tighten the `orders`/`customers`/`media`/`settings` write rules
+// below to require `request.auth != null` — the site's HTTP-based adapter
+// (storageAdapters.ts) would need an auth token added to its fetch calls
+// to match.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Public menu data — every visitor reads this to render the site.
+    // Only the admin panel writes it in practice, but see the note above:
+    // there's no way to enforce that at the rules layer without real auth.
+    match /menuItems/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+    match /categories/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+    match /extras/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Orders & customers — written by the public checkout flow itself,
+    // so these must accept writes from unauthenticated visitors.
+    match /orders/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+    match /customers/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Media references (images/videos metadata) and site settings.
+    match /media/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Everything else stays locked by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
