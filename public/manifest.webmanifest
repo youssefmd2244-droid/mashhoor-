@@ -1,0 +1,10 @@
+{
+  "name": "Restaurant",
+  "short_name": "Restaurant",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#A90009",
+  "orientation": "portrait",
+  "icons": []
+}
