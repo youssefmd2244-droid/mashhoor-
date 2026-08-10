@@ -9,8 +9,8 @@
 // startRealtimeSync() once when the app boots (see App.tsx) and again
 // whenever the admin changes the storage provider/credentials in Settings.
 
-import { getSetting, mergeSnapshot } from './store';
-import { adapters, type StorageProvider, type ProviderCredentials } from './storageAdapters';
+import { mergeSnapshot, getEffectiveStorageConfig } from './store';
+import { adapters } from './storageAdapters';
 import { startAutoSync, stopAutoSync } from './autoSync';
 
 let stopCurrent: (() => void) | null = null;
@@ -27,8 +27,7 @@ export async function startRealtimeSync(): Promise<void> {
   }
   stopAutoSync();
 
-  const provider = await getSetting<StorageProvider>('settings.storageProvider', 'local');
-  const creds = await getSetting<ProviderCredentials>('settings.providerCredentials', {});
+  const { provider, creds } = await getEffectiveStorageConfig();
   const adapter = adapters[provider];
 
   if (provider === 'local' || !adapter.isConfigured(creds)) return;
