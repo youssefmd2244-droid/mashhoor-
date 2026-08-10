@@ -1,4 +1,6 @@
 import { idbGetAll, idbGet, idbPut, idbDelete, idbClear, dataBus, STORES, type StoreName } from './idb';
+import type { StorageProvider, ProviderCredentials } from './storageAdapters';
+import { DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_ANON_KEY } from './defaultCloudConfig';
 
 export type TrashableStore = Exclude<StoreName, 'settings' | 'trash'>;
 
@@ -100,6 +102,37 @@ export async function getSetting<T = any>(key: string, fallback: T): Promise<T> 
 
 export async function setSetting<T = any>(key: string, value: T): Promise<void> {
   await idbPut('settings', { id: key, value });
+}
+
+// Resolves which cloud provider + credentials this device should actually
+// sync with. `null` fallbacks below (instead of e.g. 'local'/{}) let us tell
+// "this browser never touched Settings → Storage" apart from "the admin
+// explicitly chose محلي فقط (local only)" — only the latter should really
+// mean no cloud sync.
+//
+// Without this, only the ONE browser where an admin manually pasted the
+// Supabase URL/key ever knew to sync — every other visitor (every customer,
+// on every other device) silently ran in local-only mode forever and never
+// saw anything added/edited, since provider credentials are deliberately
+// device-local settings, never broadcast to other browsers (see
+// SYNCED_SETTINGS_KEYS below). Falling back to the restaurant's own
+// Supabase project — safe to bake in, since Supabase's anon/publishable key
+// is meant to be public — means every visitor's browser syncs automatically
+// with zero setup, while an admin's deliberate choice (a different
+// provider, or explicitly "local only") still always wins.
+export async function getEffectiveStorageConfig(): Promise<{
+  provider: StorageProvider;
+  creds: ProviderCredentials;
+}> {
+  const storedProvider = await getSetting<StorageProvider | null>('settings.storageProvider', null as any);
+  const storedCreds = await getSetting<ProviderCredentials | null>('settings.providerCredentials', null as any);
+  if (storedProvider !== null) {
+    return { provider: storedProvider, creds: storedCreds ?? {} };
+  }
+  return {
+    provider: 'supabase',
+    creds: { supabase: { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY } },
+  };
 }
 
 // Settings keys that are safe AND useful to sync as shared "site content"
