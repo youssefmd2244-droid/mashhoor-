@@ -20,11 +20,11 @@
 // instead of pretending to work.
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 
-// Edge runtime: no body-size ceiling to worry about for the token request
-// itself (the actual video bytes never pass through this function at all —
-// they go straight from the browser to Blob storage).
+// Node.js serverless runtime (NOT edge): @vercel/blob's handleUpload relies
+// on Node-only built-ins (stream/net/tls/http) that the Edge runtime can't
+// bundle — using 'edge' here is what breaks the Vercel deployment.
 export const config = {
-  runtime: 'edge',
+  runtime: 'nodejs',
 };
 
 const ALLOWED_VIDEO_TYPES = [
