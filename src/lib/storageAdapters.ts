@@ -38,6 +38,20 @@ export interface SyncAdapter {
 
 const TABLES = ['menuItems', 'categories', 'extras', 'orders', 'customers', 'media', 'settings'] as const;
 
+// Postgres folds unquoted identifiers to lowercase, so a table created via
+// plain SQL as "menuItems" actually ends up named "menuitems" in the
+// database. PostgREST is case-sensitive about the path segment it receives,
+// so requesting /rest/v1/menuItems 404s even though the table exists. This
+// maps our local (camelCase) table/collection names to the exact name to use
+// when talking to Supabase's REST API, without touching the local IndexedDB
+// naming used everywhere else in the app.
+const SUPABASE_TABLE_OVERRIDES: Partial<Record<(typeof TABLES)[number], string>> = {
+  menuItems: 'menuitems',
+};
+function toSupabaseTable(name: string): string {
+  return SUPABASE_TABLE_OVERRIDES[name as (typeof TABLES)[number]] ?? name;
+}
+
 // A push/pull that just hangs (bad wifi, a dead endpoint) is worse than one
 // that fails fast — a hung request never lets the caller know something's
 // wrong and never triggers a retry. Every network call in this file goes
@@ -75,7 +89,7 @@ const supabaseAdapter: SyncAdapter = {
     const { url, anonKey } = creds.supabase!;
     for (const [table, rows] of Object.entries(snapshot)) {
       if (!rows.length) continue;
-      const res = await fetchWithTimeout(`${url}/rest/v1/${table}`, {
+      const res = await fetchWithTimeout(`${url}/rest/v1/${toSupabaseTable(table)}`, {
         method: 'POST',
         headers: {
           apikey: anonKey,
@@ -99,7 +113,7 @@ const supabaseAdapter: SyncAdapter = {
     const { url, anonKey } = creds.supabase!;
     const result: Record<string, any[]> = {};
     for (const table of TABLES) {
-      const res = await fetchWithTimeout(`${url}/rest/v1/${table}?select=*`, {
+      const res = await fetchWithTimeout(`${url}/rest/v1/${toSupabaseTable(table)}?select=*`, {
         headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` },
       });
       if (res.ok) result[table] = await res.json();
@@ -132,7 +146,7 @@ const supabaseAdapter: SyncAdapter = {
       const client = createClient(url, anonKey);
       const channel = client.channel('site-data-realtime');
       for (const table of TABLES) {
-        channel.on('postgres_changes', { event: '*', schema: 'public', table }, scheduleRefresh);
+        channel.on('postgres_changes', { event: '*', schema: 'public', table: toSupabaseTable(table) }, scheduleRefresh);
       }
       channel.subscribe();
       unsubscribeFns.push(() => {
