@@ -89,6 +89,15 @@ const supabaseAdapter: SyncAdapter = {
     const { url, anonKey } = creds.supabase!;
     for (const [table, rows] of Object.entries(snapshot)) {
       if (!rows.length) continue;
+      // Every cloud table has the same generic shape — id (text) + data
+      // (jsonb) — so a full local record (however deeply nested — sizes,
+      // gallery, order lines, etc.) is stored as-is inside `data` instead of
+      // needing one Postgres column per field.
+      const payload = rows.map((row: any) => ({
+        id: String(row.id),
+        data: row,
+        updated_at: new Date().toISOString(),
+      }));
       const res = await fetchWithTimeout(`${url}/rest/v1/${toSupabaseTable(table)}`, {
         method: 'POST',
         headers: {
@@ -97,7 +106,7 @@ const supabaseAdapter: SyncAdapter = {
           'Content-Type': 'application/json',
           Prefer: 'resolution=merge-duplicates',
         },
-        body: JSON.stringify(rows),
+        body: JSON.stringify(payload),
       });
       // A failed request here (bad key, missing table, RLS blocking the
       // write, etc.) must NOT be treated as a successful sync — silently
@@ -113,10 +122,15 @@ const supabaseAdapter: SyncAdapter = {
     const { url, anonKey } = creds.supabase!;
     const result: Record<string, any[]> = {};
     for (const table of TABLES) {
-      const res = await fetchWithTimeout(`${url}/rest/v1/${toSupabaseTable(table)}?select=*`, {
+      const res = await fetchWithTimeout(`${url}/rest/v1/${toSupabaseTable(table)}?select=id,data`, {
         headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` },
       });
-      if (res.ok) result[table] = await res.json();
+      if (res.ok) {
+        const rows: Array<{ id: string; data: any }> = await res.json();
+        // Unwrap: the caller only ever wants the original local records back,
+        // not the id/data/updated_at wrapper used on the Supabase side.
+        result[table] = rows.map((r) => r.data);
+      }
     }
     return result;
   },
