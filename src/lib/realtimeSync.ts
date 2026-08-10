@@ -33,6 +33,20 @@ export async function startRealtimeSync(): Promise<void> {
 
   if (provider === 'local' || !adapter.isConfigured(creds)) return;
 
+  // Populate this device immediately with whatever already exists in the
+  // cloud. Without this, a brand-new visitor (empty local IndexedDB) would
+  // see a blank site until the NEXT change happened anywhere in the data —
+  // subscribe() below only reacts to changes from this point forward, it
+  // does not replay history.
+  try {
+    const initial = await adapter.pull(creds);
+    if (initial) await mergeSnapshot(initial);
+  } catch {
+    // No network / cloud temporarily unreachable — fall back silently to
+    // whatever is already stored locally on this device; subscribe() below
+    // will still pick up future changes once connectivity returns.
+  }
+
   stopCurrent = adapter.subscribe(creds, (snapshot) => {
     // mergeSnapshot writes each row through idbPut, which is what fires the
     // local change event that live components (MenuSection, etc.) listen to.
