@@ -35,11 +35,37 @@ export type StoreName = (typeof STORES)[number];
 // refresh themselves automatically the instant data changes — whether the
 // change came from this same tab (admin editing) or was just merged in from
 // a realtime cloud subscription (see realtimeSync.ts) — with NO page reload.
+//
+// notifyChange is coalesced per store (short debounce below), NOT fired
+// synchronously on every single write. Reason: a remote realtime update
+// pulls and re-merges the ENTIRE snapshot (every menu item, category,
+// extra... — see store.ts → mergeSnapshot), which can mean 50-200+
+// individual idbPut calls in a row for one small remote edit. Since ~24
+// components across the site listen for these events and each one reloads
+// + re-renders on every single event, firing one raw event per row was
+// flooding the main thread with a burst of redundant reloads — which is
+// exactly what made the site feel like it "freezes" (stops responding to
+// taps for a moment) right after any change synced in from another device.
+// Collapsing that burst into one event per store fixes it at the source
+// instead of touching all 24 listeners individually.
 // ---------------------------------------------------------------------------
 export const dataBus = new EventTarget();
 
+const pendingStores = new Set<StoreName>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+const COALESCE_MS = 80; // imperceptible delay, but collapses same-tick write bursts
+
 function notifyChange(store: StoreName) {
-  dataBus.dispatchEvent(new CustomEvent('change', { detail: { store } }));
+  pendingStores.add(store);
+  if (flushTimer) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    const stores = Array.from(pendingStores);
+    pendingStores.clear();
+    for (const s of stores) {
+      dataBus.dispatchEvent(new CustomEvent('change', { detail: { store: s } }));
+    }
+  }, COALESCE_MS);
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;
