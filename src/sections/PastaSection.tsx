@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { Environment, Float } from '@react-three/drei';
+import { Float } from '@react-three/drei';
 import * as THREE from 'three';
 import { useDirection } from '../hooks/useDirection';
 import { QuickOrderButton } from '../components/ordering/OrderingWidgets';
@@ -240,16 +240,29 @@ export default function PastaSection() {
                 dpr={[1, 1.5]}
                 gl={{ antialias: false, alpha: true, powerPreference: 'low-power' }}
                 performance={{ min: 0.4 }}
+                onCreated={({ gl }) => {
+                  // Recover gracefully instead of leaving a permanently blank
+                  // canvas (which reads as "the site just stopped working")
+                  // when a low-memory mobile GPU drops the WebGL context —
+                  // a known Chrome-on-Android behavior under memory pressure.
+                  const canvasEl = gl.domElement;
+                  canvasEl.addEventListener('webglcontextlost', (e) => {
+                    e.preventDefault(); // tells the browser we intend to restore it
+                  });
+                  canvasEl.addEventListener('webglcontextrestored', () => {
+                    gl.forceContextRestore?.();
+                  });
+                }}
               >
                 <color attach="background" args={['#B3172D']} />
-                <ambientLight intensity={0.4} />
+                <ambientLight intensity={0.55} />
                 <directionalLight position={[5, 5, 5]} intensity={1} color="#FFF8E7" />
-                <directionalLight position={[-5, 3, -5]} intensity={0.4} color="#CB977F" />
+                <directionalLight position={[-5, 3, -5]} intensity={0.5} color="#CB977F" />
+                <directionalLight position={[0, -4, 2]} intensity={0.25} color="#F5E9DD" />
                 <Float speed={1.2} rotationIntensity={0.3} floatIntensity={0.5}>
                   <PastaPlate />
                 </Float>
                 <Particles />
-                <Environment preset="studio" />
               </Canvas>
             </div>
 
