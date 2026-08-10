@@ -17,8 +17,8 @@
 //    means the cloud copy is temporarily behind; the local copy (source of
 //    truth) is untouched and the site keeps working normally offline.
 
-import { onDataChange, getFullSnapshot, getSetting, setSetting, isApplyingRemote } from './store';
-import { adapters, type StorageProvider, type ProviderCredentials } from './storageAdapters';
+import { onDataChange, getFullSnapshot, getSetting, setSetting, isApplyingRemote, getEffectiveStorageConfig } from './store';
+import { adapters } from './storageAdapters';
 
 export interface SyncStatus {
   state: 'idle' | 'syncing' | 'ok' | 'error';
@@ -52,12 +52,11 @@ let pushAgainAfter = false;
 let onlineHandlerAttached = false;
 
 async function pushNow(attempt = 1): Promise<void> {
-  const provider = await getSetting<StorageProvider>('settings.storageProvider', 'local');
+  const { provider, creds } = await getEffectiveStorageConfig();
   if (provider === 'local') {
     setStatus({ state: 'idle', message: undefined });
     return;
   }
-  const creds = await getSetting<ProviderCredentials>('settings.providerCredentials', {});
   const adapter = adapters[provider];
   if (!adapter.isConfigured(creds)) {
     setStatus({ state: 'idle', message: undefined });
