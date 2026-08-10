@@ -177,6 +177,13 @@ export async function mergeSnapshot(snapshot: Record<string, any[]>): Promise<vo
         // overwrite this device's own secrets/local-only settings
         // (provider credentials, admin password, per-visitor profile...).
         if (store === 'settings' && !(SYNCED_SETTINGS_KEYS as readonly string[]).includes(row.id)) continue;
+        // Skip the write entirely when the row is byte-for-byte identical to
+        // what's already stored locally. A remote pull re-sends the WHOLE
+        // table on every change anywhere in it, so most rows in most pulls
+        // are unchanged — writing (and notifying listeners about) all of
+        // them anyway was pure wasted work on every single sync.
+        const existing = await idbGet(store as TrashableStore, row.id);
+        if (existing !== undefined && JSON.stringify(existing) === JSON.stringify(row)) continue;
         await idbPut(store as TrashableStore, row);
       }
     }
