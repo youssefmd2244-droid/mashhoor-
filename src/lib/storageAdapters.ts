@@ -16,7 +16,10 @@ export type StorageProvider = 'local' | 'supabase' | 'firebase' | 'github';
 export interface ProviderCredentials {
   supabase?: { url: string; anonKey: string };
   firebase?: { apiKey: string; projectId: string; appId: string; storageBucket?: string };
-  github?: { owner: string; repo: string; branch: string; token: string };
+  // token is intentionally NOT part of this type anymore — see
+  // api/github-sync.ts. The real GitHub token lives only in a server-side
+  // Vercel Environment Variable; the browser never sees or stores it.
+  github?: { owner: string; repo: string; branch?: string };
 }
 
 export interface SyncAdapter {
@@ -267,64 +270,44 @@ const firebaseAdapter: SyncAdapter = {
 };
 
 const githubAdapter: SyncAdapter = {
-  isConfigured: (c) => !!c.github?.owner && !!c.github?.repo && !!c.github?.token,
+  // No token needed here anymore — GITHUB_TOKEN lives only on the server
+  // (api/github-sync.ts, a Vercel Environment Variable). The browser only
+  // ever needs to know WHERE to sync (owner/repo/branch — not secrets).
+  isConfigured: (c) => !!c.github?.owner && !!c.github?.repo,
   async push(snapshot, creds) {
-    const { owner, repo, branch, token } = creds.github!;
-    const path = 'data/site-data.json';
-    const api = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
-    let sha: string | undefined;
-    const existing = await fetchWithTimeout(`${api}?ref=${branch}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (existing.ok) sha = (await existing.json()).sha;
-    const content = btoa(unescape(encodeURIComponent(JSON.stringify(snapshot, null, 2))));
-    // Retry once on a 409 (sha conflict — another push landed between our
-    // GET above and this PUT, e.g. two admins/devices saving seconds apart)
-    // by re-fetching the latest sha and trying again, instead of just
-    // failing the whole sync over a race that resolves itself a moment later.
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await fetchWithTimeout(api, {
-        method: 'PUT',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: `chore: sync site data ${new Date().toISOString()}`,
-          content,
-          branch,
-          ...(sha ? { sha } : {}),
-        }),
-      });
-      if (res.ok) return;
-      if (res.status === 409 && attempt === 0) {
-        const retry = await fetchWithTimeout(`${api}?ref=${branch}`, { headers: { Authorization: `Bearer ${token}` } });
-        if (retry.ok) sha = (await retry.json()).sha;
-        continue;
+    const { owner, repo, branch = 'main' } = creds.github!;
+    const res = await fetchWithTimeout(
+      `/api/github-sync?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}&branch=${encodeURIComponent(branch)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(snapshot),
       }
+    );
+    if (!res.ok) {
       const detail = await res.text().catch(() => '');
       throw new Error(`فشل الحفظ على GitHub: ${res.status} ${detail}`.slice(0, 300));
     }
   },
   async pull(creds) {
-    const { owner, repo, branch, token } = creds.github!;
-    const path = 'data/site-data.json';
-    const res = await fetchWithTimeout(`https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const { owner, repo, branch = 'main' } = creds.github!;
+    const res = await fetchWithTimeout(
+      `/api/github-sync?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}&branch=${encodeURIComponent(branch)}`
+    );
     if (!res.ok) return null;
-    const json = await res.json();
-    const decoded = decodeURIComponent(escape(atob(json.content)));
-    return JSON.parse(decoded);
+    return res.json();
   },
   // GitHub has NO realtime/push mechanism for a static repo file — this is
   // the honest limitation mentioned in Settings → Storage. The closest we
-  // can get is polling: check every ~10s whether the file's ETag changed,
-  // and only pull+refresh when it actually did. Conditional requests that
-  // come back "304 Not Modified" don't count against GitHub's API rate
-  // limit, so this is safe to leave running, but it is genuinely NOT
-  // instant — expect a few seconds of delay, not "the same second".
+  // can get is polling (now via our own /api/github-sync, which forwards
+  // conditional requests to GitHub so unchanged polls stay cheap): check
+  // every ~10s whether the file changed, and only pull+refresh when it
+  // did. This is genuinely NOT instant — expect a few seconds of delay,
+  // not "the same second" like Supabase/Firebase's real push-based
+  // realtime above.
   subscribe(creds, onRemoteSnapshot) {
-    const { owner, repo, branch, token } = creds.github!;
-    const path = 'data/site-data.json';
-    const api = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`;
+    const { owner, repo, branch = 'main' } = creds.github!;
+    const api = `/api/github-sync?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}&branch=${encodeURIComponent(branch)}`;
     let etag: string | null = null;
     let cancelled = false;
 
@@ -332,20 +315,14 @@ const githubAdapter: SyncAdapter = {
       try {
         const res = await fetchWithTimeout(
           api,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              ...(etag ? { 'If-None-Match': etag } : {}),
-            },
-          },
+          { headers: etag ? { 'If-None-Match': etag } : {} },
           8_000
         );
         if (res.status === 304) return; // nothing changed since last check
         if (!res.ok) return;
         etag = res.headers.get('etag');
         const json = await res.json();
-        const decoded = decodeURIComponent(escape(atob(json.content)));
-        if (!cancelled) onRemoteSnapshot(JSON.parse(decoded));
+        if (!cancelled) onRemoteSnapshot(json);
       } catch {
         // offline / rate-limited this round — try again next tick
       }
