@@ -49,7 +49,8 @@ export default async function handler(request: Request): Promise<Response> {
     });
   }
 
-  const url = new URL(request.url);
+  const host = request.headers.get('host') || 'localhost';
+  const url = new URL(request.url, `https://${host}`);
   const owner = url.searchParams.get('owner');
   const repo = url.searchParams.get('repo');
   const branch = url.searchParams.get('branch') || 'main';
