@@ -2050,8 +2050,12 @@ function StorageTab() {
         if (pulled) await mergeSnapshot(pulled);
         setStatus('اتزامن بنجاح ✅ — البيانات المحلية اتحفظت زي ما هي برضو');
       }
-    } catch (e) {
-      setStatus('حصل خطأ أثناء المزامنة، تأكد من صحة البيانات والاتصال بالإنترنت');
+    } catch (e: any) {
+      // Show the real error (e.g. "GitHub write failed: 401 Bad credentials")
+      // instead of a generic message — this is what tells you WHAT is
+      // actually wrong (bad token, wrong repo name, network, etc.) instead
+      // of just that something is.
+      setStatus(`❌ ${e?.message || 'حصل خطأ أثناء المزامنة'}`);
     }
     setBusy(false);
   }
