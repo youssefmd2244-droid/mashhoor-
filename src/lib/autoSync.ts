@@ -17,8 +17,8 @@
 //    means the cloud copy is temporarily behind; the local copy (source of
 //    truth) is untouched and the site keeps working normally offline.
 
-import { onDataChange, getFullSnapshot, getSetting, setSetting, isApplyingRemote, getEffectiveStorageConfig } from './store';
-import { adapters } from './storageAdapters';
+import { onDataChange, getFullSnapshot, getSetting, setSetting, isApplyingRemote, getAllSyncTargets } from './store';
+import { adapters, type StorageProvider } from './storageAdapters';
 
 export interface SyncStatus {
   state: 'idle' | 'syncing' | 'ok' | 'error';
@@ -51,14 +51,25 @@ let pushing = false;
 let pushAgainAfter = false;
 let onlineHandlerAttached = false;
 
+const PROVIDER_LABEL: Record<StorageProvider, string> = {
+  local: 'محلي',
+  supabase: 'Supabase',
+  firebase: 'Firebase',
+  github: 'GitHub',
+};
+
+// Pushes to EVERY fully-configured provider in parallel (see store.ts →
+// getAllSyncTargets), not just whichever one is "active" for reads — so all
+// of them stay caught up all the time, and switching which one is active
+// later never means the others start from stale/old data. Re-pushing to a
+// target that already has the latest data (e.g. because only one of three
+// targets failed last round) is a harmless no-op — every adapter's push()
+// is an upsert — so simply retrying the whole batch on any failure is safe
+// and much simpler than tracking per-provider retry state.
 async function pushNow(attempt = 1): Promise<void> {
-  const { provider, creds } = await getEffectiveStorageConfig();
-  if (provider === 'local') {
-    setStatus({ state: 'idle', message: undefined });
-    return;
-  }
-  const adapter = adapters[provider];
-  if (!adapter.isConfigured(creds)) {
+  const targets = await getAllSyncTargets();
+  const configured = targets.filter((t) => adapters[t.provider].isConfigured(t.creds));
+  if (configured.length === 0) {
     setStatus({ state: 'idle', message: undefined });
     return;
   }
@@ -74,11 +85,41 @@ async function pushNow(attempt = 1): Promise<void> {
   setStatus({ state: 'syncing', message: undefined });
   try {
     const snapshot = await getFullSnapshot();
-    await adapter.push(snapshot, creds);
-    const ts = new Date().toISOString();
-    await setSetting('settings.lastSyncedAt', ts);
-    setStatus({ state: 'ok', lastSyncedAt: ts, message: undefined });
+    const results = await Promise.allSettled(configured.map((t) => adapters[t.provider].push(snapshot, t.creds)));
+    const failed = configured.filter((_, i) => results[i].status === 'rejected');
+
+    if (failed.length === 0) {
+      const ts = new Date().toISOString();
+      await setSetting('settings.lastSyncedAt', ts);
+      setStatus({ state: 'ok', lastSyncedAt: ts, message: undefined });
+      return;
+    }
+
+    // At least one target is behind. If SOME succeeded, the data is safely
+    // stored in at least one place already — say so plainly instead of
+    // showing a scary "failed" state — while still retrying for the rest.
+    const names = failed.map((f) => PROVIDER_LABEL[f.provider]).join('، ');
+    const partialOk = failed.length < configured.length;
+    const nextAttempt = attempt + 1;
+    if (nextAttempt <= 5) {
+      const delaySec = Math.min(30, 2 ** attempt);
+      setStatus({
+        state: partialOk ? 'ok' : 'error',
+        ...(partialOk ? { lastSyncedAt: new Date().toISOString() } : {}),
+        message: `${partialOk ? 'اتحفظ' : 'فشلت المزامنة'} — لسه مستنيين: ${names}. هتتم إعادة المحاولة خلال ${delaySec} ث`,
+      });
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => pushNow(nextAttempt), delaySec * 1000);
+    } else {
+      setStatus({
+        state: partialOk ? 'ok' : 'error',
+        ...(partialOk ? { lastSyncedAt: new Date().toISOString() } : {}),
+        message: `فشلت المزامنة مع: ${names} بعد عدة محاولات. البيانات محفوظة بأمان على الجهاز وهتتزامن تلقائيًا أول ما ترجع.`,
+      });
+    }
   } catch (e: any) {
+    // getFullSnapshot() itself threw (shouldn't normally happen — local
+    // read, not network) — treat like a full failure of this round.
     const nextAttempt = attempt + 1;
     if (nextAttempt <= 5) {
       const delaySec = Math.min(30, 2 ** attempt);
