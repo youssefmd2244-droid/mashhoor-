@@ -57,4 +57,4 @@ export const DEFAULT_GITHUB_BRANCH = 'main';
 //   - GitHub specifically also has no realtime push (~10s polling), unlike
 //     Supabase/Firebase's instant subscriptions — expect a short delay for
 //     updates to reach other devices while GitHub is the active default.
-export const ACTIVE_DEFAULT_PROVIDER: 'supabase' | 'firebase' | 'github' = 'supabase';
+export const ACTIVE_DEFAULT_PROVIDER: 'supabase' | 'firebase' | 'github' = 'github';
