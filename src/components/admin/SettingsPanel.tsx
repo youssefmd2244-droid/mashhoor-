@@ -2130,17 +2130,19 @@ function StorageTab() {
 
       {provider === 'github' && (
         <div className="space-y-2">
+          <p className="text-xs text-white/60">
+            التوكن بقى مُخزّن على السيرفر بس (Vercel → Environment Variables →
+            GITHUB_TOKEN)، مش هنا — عشان محدش من الزوار يقدر يوصله. محتاج بس
+            اسم صاحب المستودع والمستودع تحت.
+          </p>
           <input placeholder="Owner (username/org)" value={creds.github?.owner ?? ''}
-            onChange={(e) => saveCreds({ ...creds, github: { ...creds.github, owner: e.target.value, repo: creds.github?.repo ?? '', branch: creds.github?.branch ?? 'main', token: creds.github?.token ?? '' } })}
+            onChange={(e) => saveCreds({ ...creds, github: { ...creds.github, owner: e.target.value, repo: creds.github?.repo ?? '', branch: creds.github?.branch ?? 'main' } })}
             className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 outline-none" />
           <input placeholder="Repo name" value={creds.github?.repo ?? ''}
-            onChange={(e) => saveCreds({ ...creds, github: { ...creds.github, repo: e.target.value, owner: creds.github?.owner ?? '', branch: creds.github?.branch ?? 'main', token: creds.github?.token ?? '' } })}
+            onChange={(e) => saveCreds({ ...creds, github: { ...creds.github, repo: e.target.value, owner: creds.github?.owner ?? '', branch: creds.github?.branch ?? 'main' } })}
             className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 outline-none" />
           <input placeholder="Branch (main)" value={creds.github?.branch ?? 'main'}
-            onChange={(e) => saveCreds({ ...creds, github: { ...creds.github, branch: e.target.value, owner: creds.github?.owner ?? '', repo: creds.github?.repo ?? '', token: creds.github?.token ?? '' } })}
-            className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 outline-none" />
-          <input placeholder="Personal Access Token" type="password" value={creds.github?.token ?? ''}
-            onChange={(e) => saveCreds({ ...creds, github: { ...creds.github, token: e.target.value, owner: creds.github?.owner ?? '', repo: creds.github?.repo ?? '', branch: creds.github?.branch ?? 'main' } })}
+            onChange={(e) => saveCreds({ ...creds, github: { ...creds.github, branch: e.target.value, owner: creds.github?.owner ?? '', repo: creds.github?.repo ?? '' } })}
             className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 outline-none" />
         </div>
       )}
