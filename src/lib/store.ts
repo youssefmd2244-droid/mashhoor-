@@ -1,6 +1,16 @@
 import { idbGetAll, idbGet, idbPut, idbDelete, idbClear, dataBus, STORES, type StoreName } from './idb';
 import type { StorageProvider, ProviderCredentials } from './storageAdapters';
-import { DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_ANON_KEY } from './defaultCloudConfig';
+import {
+  DEFAULT_SUPABASE_URL,
+  DEFAULT_SUPABASE_ANON_KEY,
+  DEFAULT_FIREBASE_API_KEY,
+  DEFAULT_FIREBASE_PROJECT_ID,
+  DEFAULT_FIREBASE_APP_ID,
+  DEFAULT_GITHUB_OWNER,
+  DEFAULT_GITHUB_REPO,
+  DEFAULT_GITHUB_BRANCH,
+  ACTIVE_DEFAULT_PROVIDER,
+} from './defaultCloudConfig';
 
 export type TrashableStore = Exclude<StoreName, 'settings' | 'trash'>;
 
@@ -129,10 +139,83 @@ export async function getEffectiveStorageConfig(): Promise<{
   if (storedProvider !== null) {
     return { provider: storedProvider, creds: storedCreds ?? {} };
   }
+  // Never configured on this device — fall back to whichever provider is
+  // currently baked in as the site-wide default (see defaultCloudConfig.ts).
+  if (ACTIVE_DEFAULT_PROVIDER === 'firebase' && DEFAULT_FIREBASE_PROJECT_ID && DEFAULT_FIREBASE_API_KEY) {
+    return {
+      provider: 'firebase',
+      creds: {
+        firebase: {
+          apiKey: DEFAULT_FIREBASE_API_KEY,
+          projectId: DEFAULT_FIREBASE_PROJECT_ID,
+          appId: DEFAULT_FIREBASE_APP_ID,
+        },
+      },
+    };
+  }
+  if (ACTIVE_DEFAULT_PROVIDER === 'github' && DEFAULT_GITHUB_OWNER && DEFAULT_GITHUB_REPO) {
+    return {
+      provider: 'github',
+      creds: {
+        github: {
+          owner: DEFAULT_GITHUB_OWNER,
+          repo: DEFAULT_GITHUB_REPO,
+          branch: DEFAULT_GITHUB_BRANCH,
+        },
+      },
+    };
+  }
   return {
     provider: 'supabase',
     creds: { supabase: { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY } },
   };
+}
+
+// Every provider that's fully set up (baked-in defaults with real values —
+// see defaultCloudConfig.ts — filled in as each one gets configured), not
+// just whichever ONE is currently ACTIVE_DEFAULT_PROVIDER for reads.
+//
+// Why this exists: "switching" which provider is active only changes which
+// one new visitors PULL live updates from — it says nothing about whether
+// the other two keep receiving PUSHES. Without this, the two inactive
+// providers would freeze at whatever data they last had the moment they
+// stopped being active, so switching back to one later would show stale/old
+// content instead of everything that happened while it was inactive.
+// autoSync.ts calls this to push every local change to ALL of these in
+// parallel, so all three stay fully caught up all the time — switching
+// ACTIVE_DEFAULT_PROVIDER later (a code change + redeploy) then just means
+// "start reading live updates from this one instead", with its data
+// already current, not "start from scratch".
+//
+// An explicit device-level override (Settings → Storage on THIS browser)
+// still always wins and is used as the single target instead — that's a
+// deliberate admin choice for that one device, not something to silently
+// broaden back out to all three.
+export async function getAllSyncTargets(): Promise<Array<{ provider: StorageProvider; creds: ProviderCredentials }>> {
+  const storedProvider = await getSetting<StorageProvider | null>('settings.storageProvider', null as any);
+  if (storedProvider !== null) {
+    if (storedProvider === 'local') return [];
+    const storedCreds = await getSetting<ProviderCredentials | null>('settings.providerCredentials', null as any);
+    return [{ provider: storedProvider, creds: storedCreds ?? {} }];
+  }
+  const targets: Array<{ provider: StorageProvider; creds: ProviderCredentials }> = [
+    { provider: 'supabase', creds: { supabase: { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY } } },
+  ];
+  if (DEFAULT_GITHUB_OWNER && DEFAULT_GITHUB_REPO) {
+    targets.push({
+      provider: 'github',
+      creds: { github: { owner: DEFAULT_GITHUB_OWNER, repo: DEFAULT_GITHUB_REPO, branch: DEFAULT_GITHUB_BRANCH } },
+    });
+  }
+  if (DEFAULT_FIREBASE_PROJECT_ID && DEFAULT_FIREBASE_API_KEY) {
+    targets.push({
+      provider: 'firebase',
+      creds: {
+        firebase: { apiKey: DEFAULT_FIREBASE_API_KEY, projectId: DEFAULT_FIREBASE_PROJECT_ID, appId: DEFAULT_FIREBASE_APP_ID },
+      },
+    });
+  }
+  return targets;
 }
 
 // Settings keys that are safe AND useful to sync as shared "site content"
