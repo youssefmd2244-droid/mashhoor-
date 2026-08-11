@@ -40,6 +40,32 @@ function githubHeaders(token: string) {
   };
 }
 
+// Server-side calls to api.github.com had NO timeout of their own — if the
+// outbound connection stalled (DNS/connect hang, a known intermittent issue
+// with Node's fetch on some serverless runtimes), the function just sat
+// there until Vercel's own maxDuration (30s) force-killed it. That kill is
+// abrupt: it happens BEFORE our try/catch in the outer handler ever runs,
+// so the client only ever sees a bare, detail-free 504 — never our actual
+// JSON error. Wrapping every GitHub call in an explicit ~12s AbortController
+// means WE fail first, on our own terms, with a real message that says what
+// actually happened.
+async function githubFetch(url: string, init: RequestInit = {}, timeoutMs = 12_000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (e: any) {
+    if (e?.name === 'AbortError') {
+      throw new Error(
+        `تعذّر الوصول لـ api.github.com خلال ${Math.round(timeoutMs / 1000)} ث من داخل سيرفر Vercel (اتصال عالق قبل أي رد). جرّب Redeploy، أو راجع إعدادات الشبكة/الـ region في المشروع.`
+      );
+    }
+    throw new Error(`فشل الاتصال بـ GitHub: ${e?.message || String(e)}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default async function handler(request: Request): Promise<Response> {
   // Wrap EVERYTHING in try/catch. Without this, any unhandled exception
   // (bad encoding, a missing global, whatever) crashes the whole function
@@ -84,7 +110,7 @@ async function innerHandler(request: Request): Promise<Response> {
     // through to GitHub so unchanged polls stay cheap (304, no body) on
     // both legs of the trip.
     const inm = request.headers.get('if-none-match');
-    const res = await fetch(`${api}?ref=${branch}`, {
+    const res = await githubFetch(`${api}?ref=${branch}`, {
       headers: { ...githubHeaders(token), ...(inm ? { 'If-None-Match': inm } : {}) },
     });
     if (res.status === 304) return new Response(null, { status: 304 });
@@ -111,13 +137,13 @@ async function innerHandler(request: Request): Promise<Response> {
     const content = btoa(unescape(encodeURIComponent(JSON.stringify(snapshot, null, 2))));
 
     let sha: string | undefined;
-    const existing = await fetch(`${api}?ref=${branch}`, { headers: githubHeaders(token) });
+    const existing = await githubFetch(`${api}?ref=${branch}`, { headers: githubHeaders(token) });
     if (existing.ok) sha = (await existing.json()).sha;
 
     // Retry once on a 409 (sha conflict — another device's push landed
     // between our GET above and this PUT) instead of failing outright.
     for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await fetch(api, {
+      const res = await githubFetch(api, {
         method: 'PUT',
         headers: { ...githubHeaders(token), 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -129,7 +155,7 @@ async function innerHandler(request: Request): Promise<Response> {
       });
       if (res.ok) return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       if (res.status === 409 && attempt === 0) {
-        const retry = await fetch(`${api}?ref=${branch}`, { headers: githubHeaders(token) });
+        const retry = await githubFetch(`${api}?ref=${branch}`, { headers: githubHeaders(token) });
         if (retry.ok) sha = (await retry.json()).sha;
         continue;
       }
