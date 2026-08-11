@@ -1,137 +1,187 @@
-// Real Vercel serverless function — the ONLY place GITHUB_TOKEN is ever
-// read. This exists specifically so the browser (and therefore every site
-// visitor, since this is a public storefront) never needs to know GitHub's
-// write token.
+// Automatic background sync: pushes local changes up to whichever cloud
+// provider is configured (Supabase / Firebase / GitHub) WITHOUT the admin
+// having to remember to press "مزامنة الآن" every time. This is what makes
+// storage feel "دايمًا شغال" (always working) instead of "works only if you
+// remember to click sync".
 //
-// Why this matters: a GitHub personal access token is a bearer credential
-// for your WHOLE account (repos, actions, packages — whatever scopes it was
-// created with). If it were embedded in the client-side JS bundle (the old
-// design — creds.github.token sent straight from the browser to
-// api.github.com), literally anyone visiting the site could open
-// DevTools → Network/Sources and lift it, then use it to read, modify, or
-// delete anything that token can reach. A password screen on the admin
-// panel does NOT prevent this — the JS bundle (and anything embedded in
-// it) ships to every visitor's browser regardless of whether they ever see
-// or pass that password screen.
-//
-// The fix: keep GITHUB_TOKEN as a server-only Vercel Environment Variable
-// (Settings → Environment Variables — never something a browser can read).
-// The browser talks to THIS endpoint instead of api.github.com directly,
-// sending only non-secret info (owner/repo/branch — where to read/write,
-// not a credential). This function attaches the real token itself,
-// server-side, on every request.
-//
-// Note this does not change GitHub's fundamental shape as a storage
-// backend: reads/writes still go through one JSON file in a repo, and
-// there is still no realtime push from GitHub — see subscribe() in
-// storageAdapters.ts, which now polls THIS endpoint instead of GitHub's.
+// Design:
+//  - Every local write (see idb.ts → dataBus) schedules a debounced push.
+//  - Writes that came FROM a remote pull/subscribe are ignored (see
+//    store.ts → isApplyingRemote) so we don't immediately push the same
+//    data straight back up.
+//  - A failed push retries automatically with exponential backoff (up to 5
+//    tries), and also retries the moment the browser regains connectivity —
+//    so a spotty connection recovers on its own instead of silently going
+//    stale.
+//  - Nothing here ever touches or clears local data — a push failure just
+//    means the cloud copy is temporarily behind; the local copy (source of
+//    truth) is untouched and the site keeps working normally offline.
 
-export const config = {
-  runtime: 'nodejs',
-};
+import { onDataChange, getFullSnapshot, getSetting, setSetting, isApplyingRemote, getAllSyncTargets } from './store';
+import { adapters, type StorageProvider } from './storageAdapters';
 
-const DATA_PATH = 'data/site-data.json';
-
-function githubHeaders(token: string) {
-  return {
-    Authorization: `Bearer ${token}`,
-    'User-Agent': 'mashhoor-site-sync',
-    Accept: 'application/vnd.github+json',
-  };
+export interface SyncStatus {
+  state: 'idle' | 'syncing' | 'ok' | 'error';
+  message?: string;
+  lastSyncedAt?: string;
 }
 
-export default async function handler(request: Request): Promise<Response> {
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) {
-    return new Response(JSON.stringify({ error: 'GITHUB_TOKEN غير مُعرّف على السيرفر (Vercel → Settings → Environment Variables).' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
+let currentStatus: SyncStatus = { state: 'idle' };
+const listeners = new Set<(s: SyncStatus) => void>();
+
+function setStatus(patch: Partial<SyncStatus>) {
+  currentStatus = { ...currentStatus, ...patch };
+  listeners.forEach((l) => l(currentStatus));
+}
+
+export function onSyncStatusChange(cb: (s: SyncStatus) => void): () => void {
+  listeners.add(cb);
+  cb(currentStatus);
+  return () => listeners.delete(cb);
+}
+
+export function getSyncStatus(): SyncStatus {
+  return currentStatus;
+}
+
+let unsubscribeDataChange: (() => void) | null = null;
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let pushing = false;
+let pushAgainAfter = false;
+let onlineHandlerAttached = false;
+
+const PROVIDER_LABEL: Record<StorageProvider, string> = {
+  local: 'محلي',
+  supabase: 'Supabase',
+  firebase: 'Firebase',
+  github: 'GitHub',
+};
+
+// Pushes to EVERY fully-configured provider in parallel (see store.ts →
+// getAllSyncTargets), not just whichever one is "active" for reads — so all
+// of them stay caught up all the time, and switching which one is active
+// later never means the others start from stale/old data. Re-pushing to a
+// target that already has the latest data (e.g. because only one of three
+// targets failed last round) is a harmless no-op — every adapter's push()
+// is an upsert — so simply retrying the whole batch on any failure is safe
+// and much simpler than tracking per-provider retry state.
+async function pushNow(attempt = 1): Promise<void> {
+  const targets = await getAllSyncTargets();
+  const configured = targets.filter((t) => adapters[t.provider].isConfigured(t.creds));
+  if (configured.length === 0) {
+    setStatus({ state: 'idle', message: undefined });
+    return;
   }
 
-  const host = request.headers.get('host') || 'localhost';
-  const url = new URL(request.url, `https://${host}`);
-  const owner = url.searchParams.get('owner');
-  const repo = url.searchParams.get('repo');
-  const branch = url.searchParams.get('branch') || 'main';
-  if (!owner || !repo) {
-    return new Response(JSON.stringify({ error: 'owner و repo مطلوبين' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+  if (pushing) {
+    // A change landed while a push was already in flight — don't run two
+    // pushes at once, just remember to run one more right after this one.
+    pushAgainAfter = true;
+    return;
   }
-  const api = `https://api.github.com/repos/${owner}/${repo}/contents/${DATA_PATH}`;
 
-  if (request.method === 'GET') {
-    // Used both for the initial pull AND for polling (see subscribe() in
-    // storageAdapters.ts) — an incoming If-None-Match is forwarded straight
-    // through to GitHub so unchanged polls stay cheap (304, no body) on
-    // both legs of the trip.
-    const inm = request.headers.get('if-none-match');
-    const res = await fetch(`${api}?ref=${branch}`, {
-      headers: { ...githubHeaders(token), ...(inm ? { 'If-None-Match': inm } : {}) },
+  pushing = true;
+  setStatus({ state: 'syncing', message: undefined });
+  try {
+    const snapshot = await getFullSnapshot();
+    const results = await Promise.allSettled(configured.map((t) => adapters[t.provider].push(snapshot, t.creds)));
+    const failed = configured.filter((_, i) => results[i].status === 'rejected');
+    // Keep the real reason each target failed with (e.g. "GitHub read failed:
+    // 401 Bad credentials") so it can be shown to the admin instead of just
+    // the provider's name — otherwise there is no way to tell a bad token
+    // apart from a network hiccup apart from a wrong repo name, etc.
+    const failReasons = failed.map((f) => {
+      const idx = configured.indexOf(f);
+      const r = results[idx];
+      const reason = r.status === 'rejected' ? r.reason : undefined;
+      return `${PROVIDER_LABEL[f.provider]}: ${reason?.message || String(reason) || 'خطأ غير معروف'}`;
     });
-    if (res.status === 304) return new Response(null, { status: 304 });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      return new Response(JSON.stringify({ error: `GitHub read failed: ${res.status} ${detail}`.slice(0, 300) }), {
-        status: res.status,
-        headers: { 'Content-Type': 'application/json' },
+
+    if (failed.length === 0) {
+      const ts = new Date().toISOString();
+      await setSetting('settings.lastSyncedAt', ts);
+      setStatus({ state: 'ok', lastSyncedAt: ts, message: undefined });
+      return;
+    }
+
+    // At least one target is behind. If SOME succeeded, the data is safely
+    // stored in at least one place already — say so plainly instead of
+    // showing a scary "failed" state — while still retrying for the rest.
+    const detail = failReasons.join(' | ');
+    const partialOk = failed.length < configured.length;
+    const nextAttempt = attempt + 1;
+    if (nextAttempt <= 5) {
+      const delaySec = Math.min(30, 2 ** attempt);
+      setStatus({
+        state: partialOk ? 'ok' : 'error',
+        ...(partialOk ? { lastSyncedAt: new Date().toISOString() } : {}),
+        message: `${partialOk ? 'اتحفظ' : 'فشلت المزامنة'} — ${detail}. هتتم إعادة المحاولة خلال ${delaySec} ث`,
+      });
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => pushNow(nextAttempt), delaySec * 1000);
+    } else {
+      setStatus({
+        state: partialOk ? 'ok' : 'error',
+        ...(partialOk ? { lastSyncedAt: new Date().toISOString() } : {}),
+        message: `فشلت المزامنة بعد عدة محاولات — ${detail}. البيانات محفوظة بأمان على الجهاز وهتتزامن تلقائيًا أول ما ترجع.`,
       });
     }
-    const json = await res.json();
-    const decoded = decodeURIComponent(escape(atob(json.content)));
-    return new Response(decoded, {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(res.headers.get('etag') ? { ETag: res.headers.get('etag')! } : {}),
-      },
-    });
-  }
-
-  if (request.method === 'POST') {
-    const snapshot = await request.json();
-    const content = btoa(unescape(encodeURIComponent(JSON.stringify(snapshot, null, 2))));
-
-    let sha: string | undefined;
-    const existing = await fetch(`${api}?ref=${branch}`, { headers: githubHeaders(token) });
-    if (existing.ok) sha = (await existing.json()).sha;
-
-    // Retry once on a 409 (sha conflict — another device's push landed
-    // between our GET above and this PUT) instead of failing outright.
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await fetch(api, {
-        method: 'PUT',
-        headers: { ...githubHeaders(token), 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: `chore: sync site data ${new Date().toISOString()}`,
-          content,
-          branch,
-          ...(sha ? { sha } : {}),
-        }),
+  } catch (e: any) {
+    // getFullSnapshot() itself threw (shouldn't normally happen — local
+    // read, not network) — treat like a full failure of this round.
+    const nextAttempt = attempt + 1;
+    if (nextAttempt <= 5) {
+      const delaySec = Math.min(30, 2 ** attempt);
+      setStatus({
+        state: 'error',
+        message: `${e?.message || 'فشلت المزامنة'} — هتتم إعادة المحاولة تلقائيًا خلال ${delaySec} ث`,
       });
-      if (res.ok) return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-      if (res.status === 409 && attempt === 0) {
-        const retry = await fetch(`${api}?ref=${branch}`, { headers: githubHeaders(token) });
-        if (retry.ok) sha = (await retry.json()).sha;
-        continue;
-      }
-      const detail = await res.text().catch(() => '');
-      return new Response(JSON.stringify({ error: `GitHub write failed: ${res.status} ${detail}`.slice(0, 300) }), {
-        status: res.status,
-        headers: { 'Content-Type': 'application/json' },
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => pushNow(nextAttempt), delaySec * 1000);
+    } else {
+      setStatus({
+        state: 'error',
+        message: 'فشلت المزامنة بعد عدة محاولات. البيانات محفوظة بأمان على الجهاز وهتتزامن تلقائيًا أول ما الاتصال يرجع.',
       });
     }
-    return new Response(JSON.stringify({ error: 'GitHub write failed after retry' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
+  } finally {
+    pushing = false;
+    if (pushAgainAfter) {
+      pushAgainAfter = false;
+      schedulePush();
+    }
   }
+}
 
-  return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-    status: 405,
-    headers: { 'Content-Type': 'application/json' },
+function schedulePush() {
+  if (debounceTimer) clearTimeout(debounceTimer);
+  // Debounced: several admin edits in a row (e.g. re-ordering 6 menu items)
+  // collapse into a single push instead of one per row.
+  debounceTimer = setTimeout(() => pushNow(1), 1500);
+}
+
+export function startAutoSync(): void {
+  stopAutoSync();
+  unsubscribeDataChange = onDataChange((store) => {
+    if (isApplyingRemote()) return; // this change came FROM the cloud, don't bounce it back up
+    if (store === 'trash') return; // local housekeeping only, never synced
+    schedulePush();
   });
-      }
+  if (!onlineHandlerAttached && typeof window !== 'undefined') {
+    onlineHandlerAttached = true;
+    window.addEventListener('online', () => schedulePush());
+  }
+  // Also push once on start, so switching provider or restarting the app
+  // with unsynced local changes doesn't wait for the next edit.
+  schedulePush();
+}
 
+export function stopAutoSync(): void {
+  if (unsubscribeDataChange) {
+    unsubscribeDataChange();
+    unsubscribeDataChange = null;
+  }
+  if (debounceTimer) clearTimeout(debounceTimer);
+  if (retryTimer) clearTimeout(retryTimer);
+}
