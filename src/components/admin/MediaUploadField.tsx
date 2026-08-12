@@ -1,5 +1,5 @@
 import { useState, type DragEvent } from 'react';
-import { fileToDataUrl } from '../../lib/site';
+import { compressImageFile, fileToDataUrl } from '../../lib/site';
 
 interface MediaUploadFieldProps {
   value?: string;
@@ -28,7 +28,14 @@ export default function MediaUploadField({
   async function handleFiles(files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
-    const dataUrl = await fileToDataUrl(file);
+    // Compress images down to a reasonable display size before storing —
+    // an uncompressed phone-camera photo (often 5-10MB) blows past the
+    // request size the sync endpoint can accept, so the "save" silently
+    // gets stuck forever instead of ever reaching GitHub/Supabase/Firebase.
+    // Non-image files (e.g. a video picked here by mistake) fall back to
+    // the raw data URL — but see the ⚠️ hint below, video really belongs
+    // in the dedicated Vercel Blob uploader, not embedded as base64 at all.
+    const dataUrl = file.type.startsWith('image/') ? await compressImageFile(file) : await fileToDataUrl(file);
     onChange(dataUrl);
   }
 
