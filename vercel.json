@@ -3,6 +3,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
+  "ignoreCommand": "git log -1 --pretty=%s | grep -q '^chore: sync site data' && exit 0 || exit 1",
   "functions": {
     "api/upload.ts": {
       "maxDuration": 60
