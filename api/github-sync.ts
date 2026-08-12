@@ -21,10 +21,16 @@
 // not a credential). This function attaches the real token itself,
 // server-side, on every request.
 //
-// Note this does not change GitHub's fundamental shape as a storage
-// backend: reads/writes still go through one JSON file in a repo, and
-// there is still no realtime push from GitHub — see subscribe() in
-// storageAdapters.ts, which now polls THIS endpoint instead of GitHub's.
+// IMPORTANT — signature note: this function used to be written with the Web
+// Fetch API signature `(request: Request) => Promise<Response>`. Vercel's
+// Node.js runtime logged a warning that it was actually invoking this route
+// with the CLASSIC Node handler signature `(req, res)`, and since our code
+// only ever did `return new Response(...)` — never called `res.end()` —
+// Vercel sat waiting for a response that was never going to come, all the
+// way until maxDuration (30s) force-killed it. That's what was showing up
+// as "Vercel Runtime Timeout Error" on every single call. Rewriting this
+// with the classic (req, res) signature removes that ambiguity entirely.
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export const config = {
   runtime: 'nodejs',
@@ -40,15 +46,10 @@ function githubHeaders(token: string) {
   };
 }
 
-// Server-side calls to api.github.com had NO timeout of their own — if the
-// outbound connection stalled (DNS/connect hang, a known intermittent issue
-// with Node's fetch on some serverless runtimes), the function just sat
-// there until Vercel's own maxDuration (30s) force-killed it. That kill is
-// abrupt: it happens BEFORE our try/catch in the outer handler ever runs,
-// so the client only ever sees a bare, detail-free 504 — never our actual
-// JSON error. Wrapping every GitHub call in an explicit ~12s AbortController
-// means WE fail first, on our own terms, with a real message that says what
-// actually happened.
+// Calls to api.github.com had no timeout of their own — if the outbound
+// connection stalled, the function just sat there. Wrapping every GitHub
+// call in an explicit ~12s AbortController means a stuck connection fails
+// fast with a real message instead of quietly eating the whole budget.
 async function githubFetch(url: string, init: RequestInit = {}, timeoutMs = 12_000): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -56,9 +57,7 @@ async function githubFetch(url: string, init: RequestInit = {}, timeoutMs = 12_0
     return await fetch(url, { ...init, signal: controller.signal });
   } catch (e: any) {
     if (e?.name === 'AbortError') {
-      throw new Error(
-        `تعذّر الوصول لـ api.github.com خلال ${Math.round(timeoutMs / 1000)} ث من داخل سيرفر Vercel (اتصال عالق قبل أي رد). جرّب Redeploy، أو راجع إعدادات الشبكة/الـ region في المشروع.`
-      );
+      throw new Error(`تعذّر الوصول لـ api.github.com خلال ${Math.round(timeoutMs / 1000)} ث (اتصال عالق قبل أي رد).`);
     }
     throw new Error(`فشل الاتصال بـ GitHub: ${e?.message || String(e)}`);
   } finally {
@@ -66,75 +65,64 @@ async function githubFetch(url: string, init: RequestInit = {}, timeoutMs = 12_0
   }
 }
 
-export default async function handler(request: Request): Promise<Response> {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Wrap EVERYTHING in try/catch. Without this, any unhandled exception
-  // (bad encoding, a missing global, whatever) crashes the whole function
-  // and Vercel returns a generic "500 FUNCTION_INVOCATION_FAILED" with NO
-  // detail — which is exactly the unhelpful error that was showing up on
-  // the site. This way we always return real JSON explaining what broke.
+  // crashes the whole function and Vercel returns a generic 500 with no
+  // detail. This way we always return real JSON explaining what broke.
   try {
-    return await innerHandler(request);
+    await innerHandler(req, res);
   } catch (e: any) {
-    return new Response(JSON.stringify({ error: `Function crashed: ${e?.message || String(e)}`.slice(0, 500) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    if (!res.headersSent) {
+      res.status(500).json({ error: `Function crashed: ${e?.message || String(e)}`.slice(0, 500) });
+    }
   }
 }
 
-async function innerHandler(request: Request): Promise<Response> {
+async function innerHandler(req: VercelRequest, res: VercelResponse) {
   const token = process.env.GITHUB_TOKEN;
   if (!token) {
-    return new Response(JSON.stringify({ error: 'GITHUB_TOKEN غير مُعرّف على السيرفر (Vercel → Settings → Environment Variables).' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    res.status(500).json({ error: 'GITHUB_TOKEN غير مُعرّف على السيرفر (Vercel → Settings → Environment Variables).' });
+    return;
   }
 
-  const host = request.headers.get('host') || 'localhost';
-  const url = new URL(request.url, `https://${host}`);
-  const owner = url.searchParams.get('owner');
-  const repo = url.searchParams.get('repo');
-  const branch = url.searchParams.get('branch') || 'main';
+  const owner = typeof req.query.owner === 'string' ? req.query.owner : undefined;
+  const repo = typeof req.query.repo === 'string' ? req.query.repo : undefined;
+  const branch = typeof req.query.branch === 'string' ? req.query.branch : 'main';
   if (!owner || !repo) {
-    return new Response(JSON.stringify({ error: 'owner و repo مطلوبين' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    res.status(400).json({ error: 'owner و repo مطلوبين' });
+    return;
   }
   const api = `https://api.github.com/repos/${owner}/${repo}/contents/${DATA_PATH}`;
 
-  if (request.method === 'GET') {
+  if (req.method === 'GET') {
     // Used both for the initial pull AND for polling (see subscribe() in
     // storageAdapters.ts) — an incoming If-None-Match is forwarded straight
     // through to GitHub so unchanged polls stay cheap (304, no body) on
     // both legs of the trip.
-    const inm = request.headers.get('if-none-match');
-    const res = await githubFetch(`${api}?ref=${branch}`, {
-      headers: { ...githubHeaders(token), ...(inm ? { 'If-None-Match': inm } : {}) },
+    const inm = req.headers['if-none-match'];
+    const ghRes = await githubFetch(`${api}?ref=${branch}`, {
+      headers: { ...githubHeaders(token), ...(inm ? { 'If-None-Match': String(inm) } : {}) },
     });
-    if (res.status === 304) return new Response(null, { status: 304 });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      return new Response(JSON.stringify({ error: `GitHub read failed: ${res.status} ${detail}`.slice(0, 300) }), {
-        status: res.status,
-        headers: { 'Content-Type': 'application/json' },
-      });
+    if (ghRes.status === 304) {
+      res.status(304).end();
+      return;
     }
-    const json = await res.json();
-    const decoded = decodeURIComponent(escape(atob(json.content)));
-    return new Response(decoded, {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(res.headers.get('etag') ? { ETag: res.headers.get('etag')! } : {}),
-      },
-    });
+    if (!ghRes.ok) {
+      const detail = await ghRes.text().catch(() => '');
+      res.status(ghRes.status).json({ error: `GitHub read failed: ${ghRes.status} ${detail}`.slice(0, 300) });
+      return;
+    }
+    const json = await ghRes.json();
+    const decoded = Buffer.from(json.content, 'base64').toString('utf-8');
+    const etag = ghRes.headers.get('etag');
+    if (etag) res.setHeader('ETag', etag);
+    res.status(200).setHeader('Content-Type', 'application/json').send(decoded);
+    return;
   }
 
-  if (request.method === 'POST') {
-    const snapshot = await request.json();
-    const content = btoa(unescape(encodeURIComponent(JSON.stringify(snapshot, null, 2))));
+  if (req.method === 'POST') {
+    const snapshot = req.body;
+    const content = Buffer.from(JSON.stringify(snapshot, null, 2), 'utf-8').toString('base64');
 
     let sha: string | undefined;
     const existing = await githubFetch(`${api}?ref=${branch}`, { headers: githubHeaders(token) });
@@ -143,7 +131,7 @@ async function innerHandler(request: Request): Promise<Response> {
     // Retry once on a 409 (sha conflict — another device's push landed
     // between our GET above and this PUT) instead of failing outright.
     for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await githubFetch(api, {
+      const putRes = await githubFetch(api, {
         method: 'PUT',
         headers: { ...githubHeaders(token), 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -153,27 +141,22 @@ async function innerHandler(request: Request): Promise<Response> {
           ...(sha ? { sha } : {}),
         }),
       });
-      if (res.ok) return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-      if (res.status === 409 && attempt === 0) {
+      if (putRes.ok) {
+        res.status(200).json({ ok: true });
+        return;
+      }
+      if (putRes.status === 409 && attempt === 0) {
         const retry = await githubFetch(`${api}?ref=${branch}`, { headers: githubHeaders(token) });
         if (retry.ok) sha = (await retry.json()).sha;
         continue;
       }
-      const detail = await res.text().catch(() => '');
-      return new Response(JSON.stringify({ error: `GitHub write failed: ${res.status} ${detail}`.slice(0, 300) }), {
-        status: res.status,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      const detail = await putRes.text().catch(() => '');
+      res.status(putRes.status).json({ error: `GitHub write failed: ${putRes.status} ${detail}`.slice(0, 300) });
+      return;
     }
-    return new Response(JSON.stringify({ error: 'GitHub write failed after retry' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    res.status(500).json({ error: 'GitHub write failed after retry' });
+    return;
   }
 
-  return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-    status: 405,
-    headers: { 'Content-Type': 'application/json' },
-  });
-      }
-
+  res.status(405).json({ error: 'Method not allowed' });
+}
