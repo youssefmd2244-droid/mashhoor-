@@ -240,5 +240,15 @@
     }
   ],
   "media": [],
-  "settings": []
+  "settings": [
+    {
+      "id": "settings.siteTextCustomSlots",
+      "value": [
+        {
+          "key": "customText.fddb543f-e7ce-4753-b402-3c1b78576ce1",
+          "labelAr": "مشهور عنده كل جديد"
+        }
+      ]
+    }
+  ]
 }
