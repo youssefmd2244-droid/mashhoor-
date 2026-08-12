@@ -242,6 +242,10 @@
   "media": [],
   "settings": [
     {
+      "id": "settings.siteTexts",
+      "value": {}
+    },
+    {
       "id": "settings.siteTextCustomSlots",
       "value": [
         {
