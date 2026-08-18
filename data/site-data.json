@@ -113,6 +113,30 @@
   "extras": [],
   "orders": [
     {
+      "id": "1d193937-8087-4b43-90ec-1031a823c193",
+      "customer": {
+        "id": "ede0ffef-29ad-43e1-b9ff-6184d91aef60",
+        "name": "بللل",
+        "phone": "ؤبلات",
+        "address": "تيااي",
+        "createdAt": "2026-08-10T20:01:27.849Z"
+      },
+      "lines": [
+        {
+          "itemId": "seed-menu-1",
+          "nameAr": "ستيك لحم الضأن",
+          "nameEn": "Lamb Tenderloin",
+          "price": 185,
+          "qty": 2
+        }
+      ],
+      "total": 370,
+      "createdAt": "2026-08-18T14:55:37.136Z",
+      "channel": "whatsapp",
+      "paymentMethod": "instapay",
+      "deliveryMethod": "delivery"
+    },
+    {
       "id": "4b02b4f7-ab71-45ab-9953-ca565fe5bc2b",
       "lines": [
         {
@@ -209,6 +233,78 @@
       "deliveryMethod": "delivery"
     },
     {
+      "id": "6759405c-dacd-4d52-9132-f516e6b76aac",
+      "customer": {
+        "id": "ede0ffef-29ad-43e1-b9ff-6184d91aef60",
+        "name": "اللل",
+        "phone": "ةىيى",
+        "address": "تيااي",
+        "createdAt": "2026-08-10T20:01:27.849Z"
+      },
+      "lines": [
+        {
+          "itemId": "seed-menu-1",
+          "lineKey": "seed-menu-1",
+          "nameAr": "ستيك لحم الضأن",
+          "nameEn": "Lamb Tenderloin",
+          "price": 185,
+          "qty": 2,
+          "notes": "",
+          "image": "https://images.unsplash.com/photo-1544025162-d76694265947?w=800&q=80"
+        },
+        {
+          "itemId": "seed-menu-2",
+          "lineKey": "seed-menu-2",
+          "nameAr": "باستا الكمأ",
+          "nameEn": "Truffle Pasta",
+          "price": 145,
+          "qty": 3,
+          "notes": "",
+          "image": "https://images.unsplash.com/photo-1551183053-bf91a1d81141?w=800&q=80"
+        },
+        {
+          "itemId": "seed-menu-3",
+          "lineKey": "seed-menu-3",
+          "nameAr": "سلمون مشوي",
+          "nameEn": "Charred Salmon",
+          "price": 165,
+          "qty": 2,
+          "notes": "",
+          "image": "https://images.unsplash.com/photo-1467003909585-2f8a72700288?w=800&q=80"
+        }
+      ],
+      "total": 1135,
+      "generalNote": "",
+      "createdAt": "2026-08-15T17:42:17.647Z",
+      "channel": "whatsapp",
+      "paymentMethod": "vodafone_cash",
+      "deliveryMethod": "delivery"
+    },
+    {
+      "id": "92a744b9-22be-49a7-9fbb-dace305fe024",
+      "customer": {
+        "id": "ede0ffef-29ad-43e1-b9ff-6184d91aef60",
+        "name": "اللل",
+        "phone": "ةىيى",
+        "address": "تيااي",
+        "createdAt": "2026-08-10T20:01:27.849Z"
+      },
+      "lines": [
+        {
+          "itemId": "seed-menu-1",
+          "nameAr": "ستيك لحم الضأن",
+          "nameEn": "Lamb Tenderloin",
+          "price": 185,
+          "qty": 1
+        }
+      ],
+      "total": 185,
+      "createdAt": "2026-08-15T17:38:39.931Z",
+      "channel": "whatsapp",
+      "paymentMethod": "instapay",
+      "deliveryMethod": "delivery"
+    },
+    {
       "id": "b7d1113f-7356-40ae-98d2-b5b1cf2ea969",
       "customer": {
         "id": "ede0ffef-29ad-43e1-b9ff-6184d91aef60",
@@ -243,9 +339,9 @@
     },
     {
       "id": "ede0ffef-29ad-43e1-b9ff-6184d91aef60",
-      "name": "االيل",
-      "phone": "لببي",
-      "address": "وواللبب",
+      "name": "بللل",
+      "phone": "ؤبلات",
+      "address": "تيااي",
       "createdAt": "2026-08-10T20:01:27.849Z"
     }
   ],
