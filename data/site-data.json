@@ -209,6 +209,30 @@
       "deliveryMethod": "delivery"
     },
     {
+      "id": "376fe297-e19d-45fc-b457-23970bc8ee38",
+      "customer": {
+        "id": "0122447a-b0d8-45a1-8c3a-b88a0398e623",
+        "name": "للللل",
+        "phone": "ييببتت",
+        "address": "ببببببببب",
+        "createdAt": "2026-09-03T18:56:35.202Z"
+      },
+      "lines": [
+        {
+          "itemId": "seed-menu-1",
+          "nameAr": "ستيك لحم الضأن",
+          "nameEn": "Lamb Tenderloin",
+          "price": 185,
+          "qty": 3
+        }
+      ],
+      "total": 555,
+      "createdAt": "2026-09-04T00:23:57.236Z",
+      "channel": "whatsapp",
+      "paymentMethod": "instapay",
+      "deliveryMethod": "delivery"
+    },
+    {
       "id": "4b02b4f7-ab71-45ab-9953-ca565fe5bc2b",
       "lines": [
         {
@@ -428,9 +452,9 @@
   "customers": [
     {
       "id": "0122447a-b0d8-45a1-8c3a-b88a0398e623",
-      "name": "لللب",
-      "phone": "لللبب",
-      "address": "اااللل",
+      "name": "للللل",
+      "phone": "ييببتت",
+      "address": "ببببببببب",
       "createdAt": "2026-09-03T18:56:35.202Z"
     },
     {
